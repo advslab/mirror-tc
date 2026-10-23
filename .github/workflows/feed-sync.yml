@@ -1,0 +1,51 @@
+name: feed sync
+
+# Copies the source's errata file into one rolling release (tag `feeds`):
+# a conditional GET with the ETag and Last-Modified of the copy held, so an
+# unchanged origin costs one request; a changed file is downloaded whole,
+# checked to be a complete XML document, and uploaded byte for byte beside
+# state.json (the origin's validators, size, sha256, element count, copy
+# time). An origin that does not answer with a complete file leaves both as
+# they were; the schedule tries again. Every 2 hours.
+#
+# Set the repository secret SOURCE_BASE to the directory URL the file lives
+# under (Settings → Secrets and variables → Actions → Secrets); it is masked in every log.
+on:
+  schedule:
+    - cron: "35 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "true fetches the file whole even when the origin says it has not changed"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: refuse without the source secret
+        env:
+          BASE: ${{ secrets.SOURCE_BASE }}
+        run: |
+          if [ -z "$BASE" ]; then echo "::error::repository secret SOURCE_BASE is not set"; exit 1; fi
+      - name: sync
+        env:
+          BASE: ${{ secrets.SOURCE_BASE }}
+          FORCE: ${{ inputs.force }}
+          RELEASE_TAG: feeds
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          chmod +x bin/feed-sync
+          sha256sum bin/feed-sync
+          bin/feed-sync
